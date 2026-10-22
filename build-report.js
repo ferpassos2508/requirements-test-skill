@@ -2,7 +2,7 @@
 // Uso: node build-report.js <results.json> <out-dir> [--html]
 // Gera <out-dir>/test-report.md (e test-report.html com --html) a partir do results.json.
 // results.json segue o formato de DATA em report-template.html (title, subtitle, meta, env, risks,
-// requirements, tests, defects, comparison, notImplemented, outOfScope, limits, createdTests, nextSteps, foot).
+// requirements, tests, defects, comparison, notImplemented, openDecisions, outOfScope, limits, createdTests, nextSteps, foot).
 const fs = require('fs'), path = require('path');
 const [, , input, out, ...flags] = process.argv;
 if (!input || !out) { console.error('uso: node build-report.js <results.json> <out-dir> [--html]'); process.exit(1); }
@@ -18,11 +18,19 @@ R.forEach(r => (r.tcs || []).forEach(c => { if (!tid.has(c)) errs.push(`requisit
 R.forEach(r => { if (r.s !== 'pass' && !(r.exp && r.got && r.obs && r.fix)) errs.push(`requisito ${r.id} (${r.s}) sem exp/got/obs/fix`); });
 if (errs.length) { console.error('Inconsistências:\n- ' + errs.join('\n- ')); process.exit(2); }
 
+// Fonte ClickUp: sem o estado de cada task lida, a próxima execução não sabe se a task mudou (passo 0).
+const S = D.source || {};
+if (S.type === 'clickup') {
+  const st = S.tasks || [], miss = st.filter(t => !t.dateUpdated || !('lastCommentId' in t) || !Array.isArray(t.subtaskIds));
+  if (!st.length || miss.length) console.warn(`aviso: source.tasks incompleto (${st.length} tasks, ${miss.length} sem dateUpdated/lastCommentId/subtaskIds); a próxima execução vai reler a task inteira.`);
+}
+
 const c = { pass: 0, partial: 0, fail: 0, blocked: 0, untested: 0 }; R.forEach(r => c[r.s]++);
 const ex = c.pass + c.partial + c.fail, pct = ex ? Math.round(c.pass / ex * 100) : 0, cov = R.length ? Math.round(ex / R.length * 100) : 0;
 const tc = { pass: 0, fail: 0, blocked: 0, skip: 0 }; T.forEach(t => tc[t.r]++);
 const cell = s => String(s == null ? '' : s).replace(/\|/g, '\\|').replace(/\n/g, ' ');
-const list = (title, a) => a && a.length ? `\n## ${title}\n${a.map(x => '- ' + x).join('\n')}\n` : '';
+const item = x => x && typeof x === 'object' ? `**${x.t}**${x.d ? ' — ' + x.d : ''}` : x;
+const list = (title, a) => a && a.length ? `\n## ${title}\n${a.map(x => '- ' + item(x)).join('\n')}\n` : '';
 const label = { fail: 'Por que falhou', partial: 'O que falta para passar', blocked: 'Por que ficou bloqueado', untested: 'Por que não foi testado' };
 
 let md = `# ${D.title}\n${(D.meta || []).join(' • ')}\n\n${D.env || ''}\n\n## Resumo\n`;
@@ -36,7 +44,7 @@ md += `\n## Requisitos que não passaram\n` + bad.map(r => `\n### ${r.id} — ${
 md += `\n## Casos de teste\n| TC | Requisito | Tipo | Resultado | Passos | Esperado | Obtido | Evidência |\n|---|---|---|---|---|---|---|---|\n` +
   T.map(t => `| ${t.id} | ${t.req} | ${t.type} | ${RT[t.r]} | ${cell(t.steps)} | ${cell(t.expected)} | ${cell(t.actual)} | ${cell(t.ev)} |`).join('\n') + '\n';
 md += `\n## Defeitos\n` + (DF.length ? DF.map((d, i) => `\n### ${i + 1}. [${d.sev}] ${d.t}\n- **Onde:** ${d.where}\n- **Requisito:** ${d.req}\n- **Detalhe:** ${d.d}\n- **Correção sugerida:** ${d.fix}`).join('\n') : '\nNenhum.') + '\n';
-md += list('Não implementado', D.notImplemented) + list('Fora de escopo e divergências', D.outOfScope) + list('Bloqueios e limitações', D.limits) + list('Testes criados', D.createdTests) + list('Próximos passos', D.nextSteps);
+md += list('Não implementado', D.notImplemented) + list('Decisões em aberto', D.openDecisions) + list('Fora de escopo e divergências', D.outOfScope) + list('Bloqueios e limitações', D.limits) + list('Testes criados', D.createdTests) + list('Próximos passos', D.nextSteps);
 if (D.foot) md += `\n---\n${D.foot}\n`;
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, 'test-report.md'), md);
